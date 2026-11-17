@@ -1,0 +1,14 @@
+{
+  "name": "chii-server",
+  "private": true,
+  "description": "OneBook App 遠端除錯用的 Chii server（部署在 Render）",
+  "scripts": {
+    "start": "chii start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-8080}}"
+  },
+  "dependencies": {
+    "chii": "1.15.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
