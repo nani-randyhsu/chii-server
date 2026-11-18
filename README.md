@@ -107,13 +107,14 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 | 方案 / 區域 | free / singapore |
 | Build | `npm ci --include=dev && npm run build` |
 | Start | `npm start`（`node chii/bin/chii.js start -p $PORT -d $RENDER_EXTERNAL_HOSTNAME`） |
+| 自動部署 | `autoDeployTrigger: commit`，push 到連結的分支就部署 |
 | Health check | `/timestamp` |
 
 - Build 要用到 webpack 等開發用套件，加 `--include=dev` 是避免環境變數 `NODE_ENV=production` 時被 npm 略過
 - 部署後網址是 `https://chii-server.onrender.com`（服務名稱被占用時 Render 會加後綴，以 Render 後台顯示的為準）
 - `-d` 一定要帶對外網域：Chii 首頁的 `index.js` 和 DevTools 連線網址都用這個值產生，沒帶會變成 `localhost:<port>`，在 Render 上打不開
 - 免費方案閒置 15 分鐘會休眠，第一次打開要等約 1 分鐘叫醒
-- 之後 push 到連結的分支，Render 會自動重新部署
+- 之後 push 到連結的分支，Render 會自動重新部署。沒有自動部署的話，到服務的 Settings 確認 repo 是透過 GitHub 帳號連線（直接貼公開 repo 網址建立的服務只能手動部署），再用 Deploys → Manual Deploy → Deploy latest commit 補部署
 
 #### 2. iOS / Android 專案設定
 
