@@ -2,11 +2,17 @@
   "name": "chii-server",
   "private": true,
   "description": "OneBook App 遠端除錯用的 Chii server（部署在 Render）",
+  "workspaces": [
+    "chii"
+  ],
   "scripts": {
-    "start": "chii start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-8080}}"
+    "build": "npm run build:target && npm run build:front_end",
+    "build:target": "npm exec --workspace=chii -- webpack --mode=production",
+    "build:front_end": "rm -rf chii/public/front_end && mkdir -p chii/public && cp -R node_modules/chii-prebuilt/public/front_end chii/public/front_end",
+    "start": "node chii/bin/chii.js start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-8080}}"
   },
   "dependencies": {
-    "chii": "1.15.5"
+    "chii-prebuilt": "npm:chii@1.15.5"
   },
   "engines": {
     "node": ">=18"

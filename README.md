@@ -5,24 +5,34 @@ OneBook App（iOS / Android）書本 WebView 遠端除錯用的 [Chii](https://g
 
 ## 目錄結構
 
-這個 repo 沒有自己的程式碼，server 本體就是 npm 套件 `chii`，repo 只放啟動與部署設定。
+server 本體是上游 [liriliri/chii](https://github.com/liriliri/chii) 的原始碼，用 git subtree 放在 `chii/`，可以直接客製化（見「客製化與同步上游」）。
 
 ```
 chii-server/
-├── package.json        # 相依套件（chii 1.15.5）與 npm start 啟動指令
-├── package-lock.json   # 鎖定相依套件版本
+├── chii/               # 上游 Chii 原始碼（git subtree）
+│   ├── server/         #   server：target 列表頁、WebSocket 轉送
+│   ├── src/            #   target.js 與列表頁前端（TypeScript，webpack build）
+│   ├── bin/chii.js     #   CLI 入口，npm start 就是執行它
+│   └── public/         #   build 產物，不進 git：target.js、index.js、front_end/
+├── package.json        # npm workspaces 設定與 build / start 指令
+├── package-lock.json   # 鎖定相依套件版本（含 chii/ 的相依套件）
 ├── render.yaml         # Render Blueprint 設定（服務名稱、方案、區域、build / start 指令、health check）
 ├── .gitignore          # 排除 node_modules
 └── README.md
 ```
 
-`npm start` 實際執行的是：
+`package.json` 用 npm workspaces 把 `chii/` 當成本地套件，指令如下：
 
-```bash
-chii start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-8080}}
-```
+| 指令 | 做什麼 |
+| --- | --- |
+| `npm run build` | 依序執行下面兩個 build |
+| `npm run build:target` | 在 `chii/` 用 webpack 把 `src/` build 成 `chii/public/target.js`、`index.js` |
+| `npm run build:front_end` | 把 npm 套件 `chii-prebuilt`（即 `chii@1.15.5`）裡 build 好的 DevTools 前端複製到 `chii/public/front_end` |
+| `npm start` | `node chii/bin/chii.js start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-8080}}` |
 
-- 本機：沒有這兩個環境變數，預設開在 `8080`，對外網域是 `localhost:8080`
+- DevTools 前端要用 Chromium 的 depot_tools（`gclient` / `gn` / `autoninja`）才能 build，所以先沿用 npm 套件裡 build 好的版本
+- `node_modules/.bin/chii` 指向的是 `chii-prebuilt`，不是 `chii/`，啟動一律用 `npm start`，不要用 `npx chii`
+- 本機：沒有 `PORT`、`RENDER_EXTERNAL_HOSTNAME`，預設開在 `8080`，對外網域是 `localhost:8080`
 - Render：`PORT` 和 `RENDER_EXTERNAL_HOSTNAME` 由 Render 自動帶入
 
 ## 使用方式
@@ -38,6 +48,7 @@ chii start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-808
 
 ```bash
 npm install
+npm run build
 npm start          # http://localhost:8080
 ```
 
@@ -94,10 +105,11 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 | --- | --- |
 | 服務名稱 | `chii-server` |
 | 方案 / 區域 | free / singapore |
-| Build | `npm install` |
-| Start | `npm start`（`chii start -p $PORT -d $RENDER_EXTERNAL_HOSTNAME`） |
+| Build | `npm ci --include=dev && npm run build` |
+| Start | `npm start`（`node chii/bin/chii.js start -p $PORT -d $RENDER_EXTERNAL_HOSTNAME`） |
 | Health check | `/timestamp` |
 
+- Build 要用到 webpack 等開發用套件，加 `--include=dev` 是避免環境變數 `NODE_ENV=production` 時被 npm 略過
 - 部署後網址是 `https://chii-server.onrender.com`（服務名稱被占用時 Render 會加後綴，以 Render 後台顯示的為準）
 - `-d` 一定要帶對外網域：Chii 首頁的 `index.js` 和 DevTools 連線網址都用這個值產生，沒帶會變成 `localhost:<port>`，在 Render 上打不開
 - 免費方案閒置 15 分鐘會休眠，第一次打開要等約 1 分鐘叫醒
@@ -120,6 +132,45 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 1. 電腦瀏覽器打開 `https://chii-server.onrender.com`（先叫醒 server）
 2. 用上述 build 的 App 打開書本，App 會自動載入 `https://chii-server.onrender.com/target.js`
 3. 回到瀏覽器，點對應的 target（`OneBook iOS - <書本 id>` / `OneBook Android - <書本 id>`）開始除錯
+
+## 客製化與同步上游
+
+### 改了哪裡要重新做什麼
+
+| 改的地方 | 之後要做 |
+| --- | --- |
+| `chii/server/`（列表頁、WebSocket 轉送） | 重新 `npm start` |
+| `chii/src/`（target.js、列表頁前端） | `npm run build:target` 後重新 `npm start` |
+| DevTools 前端 | 目前沿用 npm 套件 build 好的版本；要改得另外準備 Chromium 工具鏈，參考上游 `package.json` 的 `init:front_end` / `build:front_end` |
+
+盡量少改上游原本的檔案，新功能放在新檔案、原檔只留一小段接上的程式，之後同步上游比較不會衝突。
+
+### 同步上游
+
+第一次在這台電腦操作要先設定 remote（remote 不會跟著 push）：
+
+```bash
+git remote add upstream https://github.com/liriliri/chii.git
+git config remote.upstream.tagOpt --no-tags
+```
+
+同步步驟：
+
+```bash
+# 1. 看上游最新版本
+git ls-remote --tags --refs upstream | sed 's#.*refs/tags/##' | sort -V | tail -5
+
+# 2. 開分支後把上游新版本 merge 進 chii/（每次都要加 --squash）
+git subtree pull --prefix=chii upstream <tag 或 master> --squash -m "同步上游 chii <版本>"
+
+# 3. 把 package.json 的 chii-prebuilt 改成同一版（"npm:chii@<版本>"），重新安裝並 build
+npm install
+npm run build
+```
+
+- 上游改了什麼可以看 `https://github.com/liriliri/chii/compare/<舊版>...<新版>`
+- 有衝突就跟一般 merge 一樣解完再 commit，commit 訊息用 git 產生的就好
+- 同步上游的 PR 用一般 merge 併回 `main`，不要 squash 或 rebase，否則 subtree 會找不到上次同步的位置
 
 ## 原理
 

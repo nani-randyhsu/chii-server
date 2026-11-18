@@ -4,6 +4,6 @@ services:
     runtime: node
     plan: free
     region: singapore
-    buildCommand: npm install
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /timestamp
