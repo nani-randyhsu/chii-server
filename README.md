@@ -173,6 +173,30 @@ App 端要實作的 bridge：
   - Android：`WebviewActivity.kt` 的 `onChiiScreencastMessage()`，API 26 以上用 `PixelCopy` 複製螢幕上的實際像素，API 24、25 退回 `WebView.draw()`（影片、WebGL 可能是空白）
 - 同時開多個 DevTools 預覽同一個 target 時共用同一組截圖，其中一個關掉預覽就會整個停止
 
+#### 預覽上的滑鼠操作改模擬成手指觸控
+
+chobitsu 收到預覽上的滑鼠操作時，只會對游標下的元素送出 JS 產生的 `mousedown` / `mousemove` / `mouseup`（`buttons` 固定是 0），放開時再補 `click`。所以點擊正常，但用 touch 或 pointer 事件寫的拖曳拖不動；滾輪則是 `scrollTop -= deltaY`，捲動方向相反。
+
+客製後的 target.js 會先攔下 `Input.dispatchMouseEvent`，改送跟手機瀏覽器處理手指一樣的事件：
+
+| 預覽上的操作 | 送到頁面的事件 |
+| --- | --- |
+| 按下左鍵 | `pointerdown` → `touchstart` |
+| 按著移動 | `pointermove` → `touchmove`，送給按下時的元素（跟真的觸控一樣） |
+| 放開 | `pointerup` → `touchend`；移動不超過 10px 而且沒被 `preventDefault` 時，再補 `mousedown` → `mouseup` → `click` |
+| 沒按著移動 | 不送事件（手指沒有 hover） |
+| 滾輪 | 先送 `wheel`，沒被 `preventDefault` 就照 `deltaY` 的方向捲動游標所在的可捲動區塊 |
+
+| 位置 | 內容 |
+| --- | --- |
+| `chii/src/target/touchInput.ts` | 新檔案，攔截 `Input.dispatchMouseEvent` 並送出上表的事件 |
+| `chii/src/target/connectServer.ts` | 只加了把訊息先交給 `touchInput` 的幾行 |
+
+- pointer 事件的 `pointerType` 是 `touch`、`pointerId` 固定是 9527；對這個 `pointerId` 呼叫 `setPointerCapture` 不會丟例外，`pointermove` / `pointerup` 會改送給 capture 的元素
+- 不能用建構子建立 `Touch` / `TouchEvent` 的環境（例如部分 iOS 版本），改用一般 `Event` 補上 `touches` / `changedTouches` 等屬性，前端讀法一樣，只是 `instanceof TouchEvent` 會是 `false`
+- 仍然是 JS 產生的事件（`isTrusted` 為 `false`），瀏覽器不會因此原生捲動、選取文字或啟動 HTML5 拖放；要捲動頁面請用滾輪
+- 右鍵等其他按鍵照舊交給 chobitsu
+
 ### 同步上游
 
 第一次在這台電腦操作要先設定 remote（remote 不會跟著 push）：
