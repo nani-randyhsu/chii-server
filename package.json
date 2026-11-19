@@ -8,7 +8,7 @@
   "scripts": {
     "build": "npm run build:target && npm run build:front_end",
     "build:target": "npm exec --workspace=chii -- webpack --mode=production",
-    "build:front_end": "rm -rf chii/public/front_end && mkdir -p chii/public && cp -R node_modules/chii-prebuilt/public/front_end chii/public/front_end",
+    "build:front_end": "rm -rf chii/public/front_end && mkdir -p chii/public && cp -R node_modules/chii-prebuilt/public/front_end chii/public/front_end && node scripts/patch-front-end.js",
     "start": "node chii/bin/chii.js start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-8080}}"
   },
   "dependencies": {

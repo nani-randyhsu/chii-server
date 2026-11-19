@@ -14,6 +14,8 @@ chii-server/
 │   ├── src/            #   target.js 與列表頁前端（TypeScript，webpack build）
 │   ├── bin/chii.js     #   CLI 入口，npm start 就是執行它
 │   └── public/         #   build 產物，不進 git：target.js、index.js、front_end/
+├── scripts/
+│   └── patch-front-end.js  # 修補複製來的 DevTools 前端（見「客製化與同步上游」）
 ├── package.json        # npm workspaces 設定與 build / start 指令
 ├── package-lock.json   # 鎖定相依套件版本（含 chii/ 的相依套件）
 ├── render.yaml         # Render Blueprint 設定（服務名稱、方案、區域、build / start 指令、health check）
@@ -27,10 +29,10 @@ chii-server/
 | --- | --- |
 | `npm run build` | 依序執行下面兩個 build |
 | `npm run build:target` | 在 `chii/` 用 webpack 把 `src/` build 成 `chii/public/target.js`、`index.js` |
-| `npm run build:front_end` | 把 npm 套件 `chii-prebuilt`（即 `chii@1.15.5`）裡 build 好的 DevTools 前端複製到 `chii/public/front_end` |
+| `npm run build:front_end` | 把 npm 套件 `chii-prebuilt`（即 `chii@1.15.5`）裡 build 好的 DevTools 前端複製到 `chii/public/front_end`，再用 `scripts/patch-front-end.js` 修補 |
 | `npm start` | `node chii/bin/chii.js start -p ${PORT:-8080} -d ${RENDER_EXTERNAL_HOSTNAME:-localhost:${PORT:-8080}}` |
 
-- DevTools 前端要用 Chromium 的 depot_tools（`gclient` / `gn` / `autoninja`）才能 build，所以先沿用 npm 套件裡 build 好的版本
+- DevTools 前端要用 Chromium 的 depot_tools（`gclient` / `gn` / `autoninja`）才能 build，所以先沿用 npm 套件裡 build 好的版本，需要的小修改由 `scripts/patch-front-end.js` 直接改 build 好的檔案
 - `node_modules/.bin/chii` 指向的是 `chii-prebuilt`，不是 `chii/`，啟動一律用 `npm start`，不要用 `npx chii`
 - 本機：沒有 `PORT`、`RENDER_EXTERNAL_HOSTNAME`，預設開在 `8080`，對外網域是 `localhost:8080`
 - Render：`PORT` 和 `RENDER_EXTERNAL_HOSTNAME` 由 Render 自動帶入
@@ -142,7 +144,7 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 | --- | --- |
 | `chii/server/`（列表頁、WebSocket 轉送） | 重新 `npm start` |
 | `chii/src/`（target.js、列表頁前端） | `npm run build:target` 後重新 `npm start` |
-| DevTools 前端 | 目前沿用 npm 套件 build 好的版本；要改得另外準備 Chromium 工具鏈，參考上游 `package.json` 的 `init:front_end` / `build:front_end` |
+| DevTools 前端 | 小修改寫在 `scripts/patch-front-end.js`，改完 `npm run build:front_end` 後重新 `npm start`；大改得另外準備 Chromium 工具鏈，參考上游 `package.json` 的 `init:front_end` / `build:front_end` |
 
 盡量少改上游原本的檔案，新功能放在新檔案、原檔只留一小段接上的程式，之後同步上游比較不會衝突。
 
@@ -222,6 +224,19 @@ chobitsu 的 Network 是靠換掉 `fetch`、XHR、`WebSocket` 記錄請求。`<s
 - 跨網域資源（例如 Chii server 的 target.js）沒有 `Timing-Allow-Origin` header 時，大小和細部時間都是 0
 - 同時開兩個 DevTools 時，先開的那個會再收到一份重送的紀錄
 
+#### Network 面板恢復完整的資源類型 filter
+
+Chii 的 DevTools 前端在 Chii 裡執行時（`globalThis.chii` 為 true），Network 面板的類型 filter 只留 Fetch/XHR 和 WS，因為原本 chobitsu 只記錄得到這兩種請求。補上靜態資源後，`scripts/patch-front-end.js` 拿掉這個限制，filter 恢復成跟 Chrome 一樣：All、Fetch/XHR、Doc、CSS、JS、Font、Img、Media、Manifest、WS、Wasm、Other。
+
+| 位置 | 內容 |
+| --- | --- |
+| `scripts/patch-front-end.js` | 新檔案，修補 `chii/public/front_end/panels/network/network.js` 裡只留兩個 filter 的那段程式碼 |
+| `package.json` | `build:front_end` 複製完 DevTools 前端後執行上面的 script |
+
+- 改的是 build 好、壓縮過的檔案，script 用正規表示式比對原本的程式碼，找不到就讓 build 失敗
+- Chii 隱藏的其他 Network 選項（隱藏 data URL、只看第三方請求、Preserve log 等）沒有恢復
+- 前端檔案的快取是 2 小時，部署後要在 DevTools 分頁強制重新整理（Cmd + Shift + R）才會看到
+
 ### 同步上游
 
 第一次在這台電腦操作要先設定 remote（remote 不會跟著 push）：
@@ -247,6 +262,7 @@ npm run build
 
 - 上游改了什麼可以看 `https://github.com/liriliri/chii/compare/<舊版>...<新版>`
 - 有衝突就跟一般 merge 一樣解完再 commit，commit 訊息用 git 產生的就好
+- `npm run build` 出現 `[patch-front-end] ✗` 代表新版 DevTools 前端的程式碼變了：到 `chii/public/front_end` 找出對應的新程式碼，更新 `scripts/patch-front-end.js` 的正規表示式；如果上游已經不再限制，就刪掉那一項
 - 同步上游的 PR 用一般 merge 併回 `main`，不要 squash 或 rebase，否則 subtree 會找不到上次同步的位置
 
 ## 原理
