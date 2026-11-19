@@ -3,6 +3,7 @@ import query from 'licia/query';
 import chobitsu from 'chobitsu';
 import { serverUrl, id } from './config';
 import { getFavicon } from './util';
+import createNativeScreencast from './nativeScreencast';
 
 let isInit = false;
 
@@ -27,9 +28,13 @@ export default function () {
     })}`
   );
 
+  // OneBook 客製化：有 App 截圖 bridge 時，畫面預覽改用原生截圖（見 nativeScreencast.ts）
+  const handleNativeScreencast = createNativeScreencast(message => ws.send(message));
+
   ws.on('open', () => {
     isInit = true;
     ws.on('message', event => {
+      if (handleNativeScreencast(event.data)) return;
       chobitsu.sendRawMessage(event.data);
     });
   });

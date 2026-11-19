@@ -146,6 +146,33 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 
 盡量少改上游原本的檔案，新功能放在新檔案、原檔只留一小段接上的程式，之後同步上游比較不會衝突。
 
+### 目前的客製化
+
+#### 畫面預覽改用 App 原生截圖
+
+Chii 內建的畫面預覽是 chobitsu 用 html2canvas 把 DOM 重畫一次，iframe、影片、`filter` 等 CSS 效果常常畫不出來。客製後的 target.js 會先攔下 DevTools 的 `Page.startScreencast` / `stopScreencast` / `screencastFrameAck`，頁面上有 App 提供的截圖 bridge 時，改請 App 截取 WebView 的實際畫面；沒有 bridge 就照舊交給 chobitsu。
+
+| 位置 | 內容 |
+| --- | --- |
+| `chii/src/target/nativeScreencast.ts` | 新檔案，攔截 screencast 指令、跟 App 要截圖、送出 `Page.screencastFrame` |
+| `chii/src/target/connectServer.ts` | 只加了把訊息先交給 `nativeScreencast` 的幾行 |
+
+App 端要實作的 bridge：
+
+| 方向 | iOS | Android |
+| --- | --- | --- |
+| 頁面 → App：要一張截圖 | `window.webkit.messageHandlers.chiiScreencast.postMessage({ action: 'capture', id, maxWidth, quality })` | `window.ChiiScreencast.postMessage('<同樣內容的 JSON 字串>')` |
+| App → 頁面：交回截圖 | `window.__chiiScreencastFrame(id, { data, width, height })` | 同左 |
+
+- `data` 是 JPEG 的 base64（不含 `data:` 前綴），`width` / `height` 是圖片像素；`maxWidth` 是 CSS px，App 截圖後縮到這個寬度、1 倍像素，減少經過 Render 的傳輸量；失敗時改傳 `{ error: '原因' }`
+- 截圖的開始、停止和頻率都由 target.js 控制，App 只負責「收到一次請求就截一張」，不用處理 `stopScreencast`
+- target.js 收到 DevTools 的 ack 後隔 0.5 秒才要下一張，所以大約每秒 1～2 張；頁面在背景或截圖失敗時改成每 2 秒重試
+- 沒收到 ack 就不會要下一張：直接關掉 DevTools 分頁時不會送 `stopScreencast`，靠這點讓 App 停止截圖
+- App 端實作位置：
+  - iOS：`BookWebVC.swift` 的 `captureChiiScreencastFrame()`，用 `WKWebView.takeSnapshot`
+  - Android：`WebviewActivity.kt` 的 `onChiiScreencastMessage()`，API 26 以上用 `PixelCopy` 複製螢幕上的實際像素，API 24、25 退回 `WebView.draw()`（影片、WebGL 可能是空白）
+- 同時開多個 DevTools 預覽同一個 target 時共用同一組截圖，其中一個關掉預覽就會整個停止
+
 ### 同步上游
 
 第一次在這台電腦操作要先設定 remote（remote 不會跟著 push）：
