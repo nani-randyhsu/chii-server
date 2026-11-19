@@ -197,6 +197,31 @@ chobitsu 收到預覽上的滑鼠操作時，只會對游標下的元素送出 J
 - 仍然是 JS 產生的事件（`isTrusted` 為 `false`），瀏覽器不會因此原生捲動、選取文字或啟動 HTML5 拖放；要捲動頁面請用滾輪
 - 右鍵等其他按鍵照舊交給 chobitsu
 
+#### Network 面板補上靜態資源
+
+chobitsu 的 Network 是靠換掉 `fetch`、XHR、`WebSocket` 記錄請求。`<script>`、`<link>`、`<img>`、CSS 的 `url()` 是瀏覽器自己下載的，不經過任何 JS 函式，所以原本 Network 面板看不到 JS、CSS、圖片、字型這些資源。
+
+客製後的 target.js 改讀瀏覽器的資源載入紀錄（Resource Timing：`performance.getEntriesByType` 與 `PerformanceObserver`），再用 capture 階段的 `error` 事件判斷哪些載入失敗，轉成 Network 事件送給 DevTools：
+
+| Network 面板上 | 來源 |
+| --- | --- |
+| 網址、類型、耗時、Timing 分頁的細部時間 | 資源載入紀錄 |
+| 大小（快取命中時顯示 `(disk cache)`） | 資源載入紀錄的 `transferSize` / `decodedBodySize` |
+| 狀態碼 | 資源載入紀錄的 `responseStatus`，瀏覽器不支援時顯示 `Finished` |
+| `(failed) error 事件` | 頁面收到這個資源的 `error` 事件（例如連不上、圖片壞掉）；有 4xx / 5xx 狀態碼時直接顯示狀態碼 |
+
+| 位置 | 內容 |
+| --- | --- |
+| `chii/src/target/resourceTiming.ts` | 新檔案，收集資源載入紀錄和 `error` 事件、轉成 Network 事件 |
+| `chii/src/target/connectServer.ts` | 只加了讓 `resourceTiming` 看到 `Network.enable` 的幾行，訊息照樣交給 chobitsu |
+
+- `fetch` / XHR 照舊由 chobitsu 記錄（有 header 和內容），這裡只補 target.js 載入前就發出的 `fetch` / XHR，Method 欄留白
+- DevTools 每次打開都會重送目前為止的紀錄，晚開 DevTools 也看得到頁面一開始載了什麼；最多保留最新 1000 筆
+- 資源載完才有紀錄，所以載完才出現在列表；沒有 header，也沒有內容可以預覽
+- 狀態碼要 Android WebView 109 以後才有；iOS 是否支援要實測，不支援時 404 這類錯誤只有在 target.js 注入後發生、收到 `error` 事件才看得出來
+- 跨網域資源（例如 Chii server 的 target.js）沒有 `Timing-Allow-Origin` header 時，大小和細部時間都是 0
+- 同時開兩個 DevTools 時，先開的那個會再收到一份重送的紀錄
+
 ### 同步上游
 
 第一次在這台電腦操作要先設定 remote（remote 不會跟著 push）：
@@ -270,7 +295,7 @@ target.js 是放進被除錯網頁裡的除錯代理程式，負責和 Chii serv
 
 - **Elements**：查看、修改 DOM 和 CSS
 - **Console**：看 log、在頁面裡執行 JS
-- **Network**：看 XHR 和 fetch 請求
+- **Network**：看 XHR、fetch、WebSocket 請求，以及 JS、CSS、圖片、字型等靜態資源的載入結果（見「Network 面板補上靜態資源」）
 - **Application**：看 localStorage、sessionStorage、cookie
 
 ## 限制
@@ -278,8 +303,8 @@ target.js 是放進被除錯網頁裡的除錯代理程式，負責和 Chii serv
 這些功能都是 target.js 在頁面裡用 JS 模擬出來的，不是 WebView 原生的除錯介面，所以有以下限制：
 
 - **不能設中斷點**：沒有真正的 JS 除錯器，沒辦法在 Sources 面板的某一行停下來逐步執行，只能靠 Console 或加 log 追問題。
-- **看不到注入前發生的事**：target.js 是頁面載入到一半之後才插進去的（時機見上方「App 怎麼注入 target.js」）。插進去之後還要從 server 下載 target.js 並連線，所以頁面剛開始的 console log 和請求都不會出現。
-- **Network 看不到靜態資源**：只攔得到 XHR 和 fetch，圖片、CSS、JS、字型這些靜態資源的載入不會顯示。
+- **看不到注入前發生的事**：target.js 是頁面載入到一半之後才插進去的（時機見上方「App 怎麼注入 target.js」）。插進去之後還要從 server 下載 target.js 並連線，所以頁面剛開始的 console log 不會出現，請求也只看得到網址和耗時（從資源載入紀錄補上），看不到 header 和內容。
+- **Network 的靜態資源資訊較少**：JS、CSS、圖片、字型是從瀏覽器的資源載入紀錄補上的，載完才出現，沒有 header 和內容；只有 XHR、fetch、WebSocket 看得到完整內容。
 - **只除錯得到主頁面**：iOS 設了 `forMainFrameOnly: true`，Android 的 `evaluateJavascript` 也只在主頁面執行，所以 iframe 裡的內容（例如書本中部分用 iframe 載入的元件）不會被除錯到。
 - **看不到 Native log**：Swift / Kotlin 端的 log 不會出現在 DevTools。
 
