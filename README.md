@@ -154,9 +154,11 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 
 Chii 內建的畫面預覽是 chobitsu 用 html2canvas 把 DOM 重畫一次，iframe、影片、`filter` 等 CSS 效果常常畫不出來。客製後的 target.js 會先攔下 DevTools 的 `Page.startScreencast` / `stopScreencast` / `screencastFrameAck`，頁面上有 App 提供的截圖 bridge 時，改請 App 截取 WebView 的實際畫面；沒有 bridge 就照舊交給 chobitsu。
 
+iOS 的截圖截不到 `<video>` 的畫面（例如生字的筆順動畫，那一塊會是空白），所以 iOS 收到截圖後，target.js 再把畫面上每個 `<video>` 目前的畫格畫到截圖上對應的位置。
+
 | 位置 | 內容 |
 | --- | --- |
-| `chii/src/target/nativeScreencast.ts` | 新檔案，攔截 screencast 指令、跟 App 要截圖、送出 `Page.screencastFrame` |
+| `chii/src/target/nativeScreencast.ts` | 新檔案，攔截 screencast 指令、跟 App 要截圖、iOS 補畫影片、送出 `Page.screencastFrame` |
 | `chii/src/target/connectServer.ts` | 只加了把訊息先交給 `nativeScreencast` 的幾行 |
 
 App 端要實作的 bridge：
@@ -171,8 +173,13 @@ App 端要實作的 bridge：
 - target.js 收到 DevTools 的 ack 後隔 0.5 秒才要下一張，所以大約每秒 1～2 張；頁面在背景或截圖失敗時改成每 2 秒重試
 - 沒收到 ack 就不會要下一張：直接關掉 DevTools 分頁時不會送 `stopScreencast`，靠這點讓 App 停止截圖
 - App 端實作位置：
-  - iOS：`BookWebVC.swift` 的 `captureChiiScreencastFrame()`，用 `WKWebView.takeSnapshot`
-  - Android：`WebviewActivity.kt` 的 `onChiiScreencastMessage()`，API 26 以上用 `PixelCopy` 複製螢幕上的實際像素，API 24、25 退回 `WebView.draw()`（影片、WebGL 可能是空白）
+  - iOS：`ChiiRemoteDebug.swift` 的 `ChiiScreencastHandler`，用 `WKWebView.takeSnapshot`（截不到 `<video>`，改用 `drawHierarchy` 也一樣，所以由 target.js 補畫影片）
+  - Android：`util/ChiiScreencastBridge.kt`，API 26 以上用 `PixelCopy` 複製螢幕上的實際像素，影片也截得到；API 24、25 退回 `WebView.draw()`（影片、WebGL 可能是空白）
+  - 兩邊都只截 WebView 那一塊，旁邊的原生元件（例如 iOS 左上角的關閉鍵）不在預覽上，預覽的座標才會跟網頁一致
+- iOS 補畫影片的限制：
+  - 照 `<video>` 的位置、border、padding 和 `object-fit` 畫，`object-position` 一律當作置中，CSS 旋轉和圓角不處理
+  - 疊在影片上面的元素會被影片蓋掉；iframe 裡的影片不會補
+  - 跨網域又沒開 CORS 的影片畫上去後 canvas 不能輸出，這時照原本的截圖送出，Console 會出現一次 `[chii] cannot draw videos on the native screencast frame`
 - 同時開多個 DevTools 預覽同一個 target 時共用同一組截圖，其中一個關掉預覽就會整個停止
 
 #### 預覽上的滑鼠操作改模擬成手指觸控
