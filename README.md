@@ -244,6 +244,30 @@ Chii 的 DevTools 前端在 Chii 裡執行時（`globalThis.chii` 為 true），
 - Chii 隱藏的其他 Network 選項（隱藏 data URL、只看第三方請求、Preserve log 等）沒有恢復
 - 前端檔案的快取是 2 小時，部署後要在 DevTools 分頁強制重新整理（Cmd + Shift + R）才會看到
 
+#### Application 面板可以修改、新增 cookie
+
+chobitsu 只實作讀取和刪除 cookie，沒有 `Network.setCookie`，在 Application → Cookies 改值或新增時，表格會跳回原本的值。而且 chobitsu 讀到的 cookie 只有名稱和值，DevTools 存檔時要用到 domain，連改值的指令都送不出去。
+
+客製後的 target.js 先攔下這兩個指令，不交給 chobitsu：
+
+| 指令 | 做法 |
+| --- | --- |
+| `Network.getCookies` | 回傳原始的值（chobitsu 會先 URL 解碼，改完寫回去就變了；要看解碼後的值可以勾表格下方的 Show URL-decoded），並補上 domain、path、到期時間 |
+| `Network.setCookie` | 用 `document.cookie` 寫入，寫完再讀回來確認瀏覽器有收下 |
+
+| 位置 | 內容 |
+| --- | --- |
+| `chii/src/target/editableCookies.ts` | 新檔案，處理上面兩個指令 |
+| `chii/src/target/connectServer.ts` | 只加了把訊息先交給 `editableCookies` 的幾行 |
+
+- 刪除照舊交給 chobitsu
+- HttpOnly cookie 是 JS 碰不到的：列表上看不到，也不能把 cookie 設成 HttpOnly
+- `document.cookie` 只有名稱和值。瀏覽器的 Cookie Store API 有提供時（Chrome、Android WebView），domain、path、到期時間照實顯示；沒有的話一律當作目前網域、path 是 `/`、session cookie，這時：
+  - 改值會變成 session cookie，App 關掉就消失；要保留就在 Expires 欄填日期
+  - 原本的 domain 或 path 不是這樣的話，會多出一個同名的 cookie，可以先刪掉舊的再新增
+- Domain 只能填目前網域，或以 `.` 開頭的上層網域
+- 瀏覽器不收的 cookie（例如 `SameSite=None` 沒勾 Secure）那一列會維持沒存成功的樣子，原因會印在 Console：`[chii] 無法設定 cookie ...`
+
 ### 同步上游
 
 第一次在這台電腦操作要先設定 remote（remote 不會跟著 push）：
@@ -319,7 +343,7 @@ target.js 是放進被除錯網頁裡的除錯代理程式，負責和 Chii serv
 - **Elements**：查看、修改 DOM 和 CSS
 - **Console**：看 log、在頁面裡執行 JS
 - **Network**：看 XHR、fetch、WebSocket 請求，以及 JS、CSS、圖片、字型等靜態資源的載入結果（見「Network 面板補上靜態資源」）
-- **Application**：看 localStorage、sessionStorage、cookie
+- **Application**：看 localStorage、sessionStorage、cookie，cookie 可以修改、新增、刪除（HttpOnly 的除外，見「Application 面板可以修改、新增 cookie」）
 
 ## 限制
 

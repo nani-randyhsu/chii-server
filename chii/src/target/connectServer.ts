@@ -6,6 +6,7 @@ import { getFavicon } from './util';
 import createNativeScreencast from './nativeScreencast';
 import createTouchInput from './touchInput';
 import createResourceTiming from './resourceTiming';
+import createEditableCookies from './editableCookies';
 
 let isInit = false;
 
@@ -36,12 +37,15 @@ export default function () {
   const handleTouchInput = createTouchInput(message => ws.send(message));
   // OneBook 客製化：Network 面板補上 JS、CSS、圖片等靜態資源（見 resourceTiming.ts）
   const handleResourceTiming = createResourceTiming(message => ws.send(message));
+  // OneBook 客製化：Application → Cookies 可以修改、新增 cookie（見 editableCookies.ts）
+  const handleEditableCookies = createEditableCookies(message => ws.send(message));
 
   ws.on('open', () => {
     isInit = true;
     ws.on('message', event => {
       if (handleNativeScreencast(event.data)) return;
       if (handleTouchInput(event.data)) return;
+      if (handleEditableCookies(event.data)) return;
       handleResourceTiming(event.data);
       chobitsu.sendRawMessage(event.data);
     });
