@@ -3,7 +3,6 @@ import $ from 'licia/$';
 import randomId from 'licia/randomId';
 import toInt from 'licia/toInt';
 import LunaDataGrid from 'luna-data-grid';
-import LunaModal from 'luna-modal';
 import LunaToolbar from 'luna-toolbar';
 import each from 'licia/each';
 import throttle from 'licia/throttle';
@@ -17,7 +16,6 @@ import globeIcon from './icon/globe.svg';
 import androidIcon from './icon/android.svg';
 import 'luna-data-grid/luna-data-grid.css';
 import 'luna-toolbar/luna-toolbar.css';
-import 'luna-modal/luna-modal.css';
 
 declare const window: any;
 
@@ -60,25 +58,13 @@ setInterval(() => {
 
 const $targets = $('.targets');
 const $toolbar = $('.toolbar');
-const $help = $('.help');
-const $description = $('.description');
 
-const help = new LunaModal($help.get(0) as HTMLElement, {
-  theme: 'auto',
-  title: 'Help',
-  content: $description.get(0) as HTMLElement,
-});
-
+// OneBook 客製化：拿掉 Help 按鈕和說明視窗，使用步驟直接寫在首頁（見 server/tpl/index.hbs）
 const toolbar = new LunaToolbar($toolbar.get(0) as HTMLElement, {
   theme: 'auto',
 });
 toolbar.appendInput('filter', '', 'Filter');
 const targets = toolbar.appendText('0 Target');
-toolbar.appendSpace();
-toolbar.appendButton('Help', () => {
-  $description.rmClass('hidden');
-  help.show();
-});
 toolbar.on('change', (key, val) => {
   if (key === 'filter') {
     dataGrid.setOption('filter', val);

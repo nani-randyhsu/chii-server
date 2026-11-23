@@ -1,32 +1,215 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant-TW">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Inspect with Chii</title>
+  <title>Chii 遠端除錯</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='96' fill='%23EC7963'/%3E%3Cpath d='M128 355.157V238.655C128 230.609 135.763 224.842 143.466 227.167L239.466 256.132C244.533 257.661 248 262.329 248 267.621V384.123C248 392.169 240.237 397.935 232.534 395.611L136.534 366.645C131.467 365.117 128 360.449 128 355.157Z' fill='white'/%3E%3Cpath d='M384 355.157V238.655C384 230.609 376.237 224.842 368.534 227.167L272.534 256.132C267.467 257.661 264 262.329 264 267.621V384.123C264 392.169 271.763 397.935 279.466 395.611L375.466 366.645C380.533 365.117 384 360.449 384 355.157Z' fill='white'/%3E%3Ccircle cx='256' cy='162.5' r='60' fill='white'/%3E%3C/svg%3E">
   <style>
+    /* 配色、字型、陰影參照南一智慧電子書線上書城 https://reader.nani.com.tw/bookstore */
+    :root {
+      --font: -apple-system, BlinkMacSystemFont, Arial, 'PingFang TC', 'Microsoft JhengHei', 'Noto Sans TC',
+        'Segoe UI', Roboto, 'Helvetica Neue', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+      --brand: #ec7963;
+      --brand-nav: #dd7674;
+      --text: #212b36;
+      --text-secondary: #637381;
+      --bg: #fff;
+      --card-border: #ccc;
+      --card-bg: linear-gradient(90deg, #fff 20%, #f4f4f4 80%);
+      --header-bg: #fff;
+      --header-shadow: 1px 1px 3px rgba(51, 51, 102, 0.5);
+      --panel-shadow: 0 0 10px #ccc;
+      --link: #315d83;
+      --input-line: rgba(0, 0, 0, 0.42);
+      --row-even: #fdf6f4;
+      --row-hover: #fbe6e1;
+
+      /* luna 元件（裝置列表、工具列）讀的變數 */
+      --luna-font-family: var(--font);
+      --luna-color-primary: var(--brand);
+      --luna-color-border: #dfe3e8;
+      --luna-color-fill-secondary: #fdf1ee;
+      --luna-color-fill: #f9dcd5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --text: #e8eaed;
+        --text-secondary: #9aa0a6;
+        --bg: #202124;
+        --card-border: #3c4043;
+        --card-bg: linear-gradient(90deg, #2a2b2e 20%, #26272a 80%);
+        --header-bg: #2a2b2e;
+        --header-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+        --panel-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        --link: #8ab4f8;
+        --input-line: rgba(255, 255, 255, 0.42);
+        --row-even: #26272a;
+        --row-hover: #3a2c29;
+
+        --luna-color-border: #424242;
+        --luna-color-fill-secondary: rgba(236, 121, 99, 0.16);
+        --luna-color-fill: rgba(236, 121, 99, 0.28);
+      }
+    }
+
     * {
       box-sizing: border-box;
     }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-  'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji',
-  'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-      padding: 0 20px;
-      font-size: 13px;
+      margin: 0;
       min-width: 320px;
+      font-family: var(--font);
+      font-size: 16px;
+      color: var(--text);
+      background-color: var(--bg);
     }
     a {
-      color: #1966d2;
+      color: var(--link);
+    }
+
+    /* 頁首：Logo、分頁、版本，跟線上書城一樣是白底加陰影 */
+    .site-header {
+      background-color: var(--header-bg);
+      box-shadow: var(--header-shadow);
+    }
+    .site-header__inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+    .brand__mark {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      flex-shrink: 0;
+    }
+    .brand__text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+      color: var(--brand);
+    }
+    .brand__sub {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    .brand__name {
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .nav {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+    }
+    .nav__link {
+      position: relative;
+      padding: 8px 0 12px;
+      color: var(--text);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .nav__link:hover,
+    .nav__link--current {
+      color: var(--brand-nav);
+    }
+    .nav__link:hover::after,
+    .nav__link--current::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 5px;
+      border-radius: 10px;
+      background-color: var(--brand-nav);
+    }
+    .version {
+      flex-shrink: 0;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* 內容區：線上書城的書單區塊是一整條帶陰影的白底 */
+    .page {
+      margin-top: 24px;
+      padding: 20px 0 28px;
+      box-shadow: var(--panel-shadow);
     }
     #container {
-      max-width: 1440px;
+      max-width: 1200px;
       margin: 0 auto;
+      padding: 0 20px;
     }
-    .toolbar {
-      background: transparent !important;
-      z-index: 1;
+
+    /* 使用步驟：沿用書本卡片的框線、漸層底色 */
+    .steps {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .step {
+      display: flex;
+      gap: 12px;
+      padding: 15px;
+      border: 1px solid var(--card-border);
+      border-radius: 0.2rem;
+      background: var(--card-bg);
+    }
+    .step__no {
+      width: 28px;
+      height: 28px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      background-color: var(--brand);
+      color: #fff;
+      font-weight: 700;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .step__title {
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .step__desc {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+    .section-title {
+      margin: 28px 0 4px;
+      font-size: 18px;
+      font-weight: 500;
+    }
+
+    /* 工具列：篩選欄位改成線上書城下拉選單那種底線樣式 */
+    .toolbar.luna-toolbar {
+      height: auto;
+      min-height: 44px;
       margin-bottom: 8px;
+      align-items: center;
+      border-bottom: 0;
+      background: transparent !important;
+      font-size: 14px;
+      color: var(--text-secondary);
     }
     .toolbar > div:first-child {
       margin-left: 0;
@@ -34,16 +217,60 @@
     .toolbar > div:last-child {
       margin-right: 0;
     }
-    .description {
-      margin: 1rem 0;
-      font-size: .875rem;
-      line-height: 2;
+    .toolbar.luna-toolbar .luna-toolbar-item-input input {
+      width: 240px;
+      height: 32px;
+      margin: 0 12px 0 0;
+      padding: 4px 0;
+      border: 0;
+      border-bottom: 1px solid var(--input-line);
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 16px;
     }
+    .toolbar.luna-toolbar .luna-toolbar-item-input input:focus {
+      padding-bottom: 3px;
+      border-bottom: 2px solid var(--brand);
+    }
+    .toolbar.luna-toolbar .luna-toolbar-item-text {
+      line-height: 32px;
+    }
+
+    /* 裝置列表：每列高度由 luna-data-grid 固定 20px，這裡只改顏色 */
     .targets {
       width: 100%;
     }
-    .hidden {
-      display: none;
+    .targets.luna-data-grid {
+      border-radius: 0.2rem;
+    }
+    .targets.luna-data-grid th {
+      font-weight: 500;
+    }
+    .targets.luna-data-grid .luna-data-grid-data-container tr:nth-child(even) {
+      background-color: var(--row-even);
+    }
+    /* 資料下方補空白的那一列不上底色 */
+    .targets.luna-data-grid .luna-data-grid-data-container tr.luna-data-grid-filler-row {
+      background-color: transparent;
+    }
+    .targets.luna-data-grid .luna-data-grid-data-container .luna-data-grid-node.luna-data-grid-selectable:hover,
+    .targets.luna-data-grid .luna-data-grid-data-container .luna-data-grid-node.luna-data-grid-selected {
+      background-color: var(--row-hover);
+    }
+    .targets.luna-data-grid:focus .luna-data-grid-node.luna-data-grid-selectable.luna-data-grid-selected {
+      background-color: var(--brand);
+    }
+    .targets.luna-data-grid td:last-child a {
+      color: var(--brand);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .targets.luna-data-grid td:last-child a:hover {
+      text-decoration: underline;
+    }
+    .targets.luna-data-grid:focus .luna-data-grid-selected a {
+      color: #fff;
     }
     .luna-data-grid img {
       height: 14px;
@@ -54,26 +281,92 @@
       flex-shrink: 0;
       vertical-align: top;
     }
-    @media (prefers-color-scheme: dark) {
-      body {
-        background-color: #202124;
-        color: #ddd;
+
+    @media (max-width: 720px) {
+      .site-header__inner {
+        padding: 10px 16px;
+        gap: 16px;
+      }
+      .brand__mark {
+        width: 32px;
+        height: 32px;
+      }
+      .brand__name {
+        font-size: 18px;
+      }
+      .nav {
+        justify-content: flex-end;
+        gap: 20px;
+      }
+      .version {
+        display: none;
+      }
+      #container {
+        padding: 0 16px;
+      }
+      .steps {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .toolbar.luna-toolbar .luna-toolbar-item-input input {
+        width: 140px;
       }
     }
   </style>
 </head>
 <body>
-  <div id="container">
-    <div class="toolbar"></div>
-    <div class="targets"></div>
+  <header class="site-header">
+    <div class="site-header__inner">
+      <a class="brand" href="{{basePath}}">
+        <svg class="brand__mark" viewBox="0 0 512 512" aria-hidden="true">
+          <rect width="512" height="512" fill="#EC7963"/>
+          <path d="M128 355.157V238.655C128 230.609 135.763 224.842 143.466 227.167L239.466 256.132C244.533 257.661 248 262.329 248 267.621V384.123C248 392.169 240.237 397.935 232.534 395.611L136.534 366.645C131.467 365.117 128 360.449 128 355.157Z" fill="#fff"/>
+          <path d="M384 355.157V238.655C384 230.609 376.237 224.842 368.534 227.167L272.534 256.132C267.467 257.661 264 262.329 264 267.621V384.123C264 392.169 271.763 397.935 279.466 395.611L375.466 366.645C380.533 365.117 384 360.449 384 355.157Z" fill="#fff"/>
+          <circle cx="256" cy="162.5" r="60" fill="#fff"/>
+        </svg>
+        <span class="brand__text">
+          <span class="brand__sub">OneBook App</span>
+          <span class="brand__name">Chii 遠端除錯</span>
+        </span>
+      </a>
+      <nav class="nav">
+        <a class="nav__link nav__link--current" href="{{basePath}}" aria-current="page">連線裝置</a>
+      </nav>
+      <div class="version">Version: Chii {{version}}</div>
+    </div>
+  </header>
+
+  <div class="page">
+    <main id="container">
+      <ol class="steps">
+        <li class="step">
+          <span class="step__no">1</span>
+          <div>
+            <div class="step__title">開啟 App 的書本頁或登入頁</div>
+            <div class="step__desc">要用 Debug build，頁面載完會自動連上這個 server。</div>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step__no">2</span>
+          <div>
+            <div class="step__title">在下方列表找到裝置</div>
+            <div class="step__desc">連上的裝置會自動出現，不用重新整理；可以用標題或網址篩選。</div>
+          </div>
+        </li>
+        <li class="step">
+          <span class="step__no">3</span>
+          <div>
+            <div class="step__title">點 inspect 開始除錯</div>
+            <div class="step__desc">新分頁會開啟 DevTools，可以看 Elements、Console、Network 和畫面預覽。</div>
+          </div>
+        </li>
+      </ol>
+
+      <h2 class="section-title">連線中的裝置</h2>
+      <div class="toolbar"></div>
+      <div class="targets"></div>
+    </main>
   </div>
-  <div class="description hidden">
-    You can use this script to inject the chii target code into your web page.<br/>
-    <a target="_blank" href="//{{domain}}{{basePath}}target.js">{{domain}}{{basePath}}target.js</a> <br/>
-    Or just open the demo page <a target="_blank" href="//{{domain}}{{basePath}}test/demo.html">{{domain}}{{basePath}}test/demo.html</a> to play around with.<br/>
-    <a target="_blank" href="https://chii.liriliri.io/">Chii v{{version}}</a>
-  </div>
-  <div class="help"></div>
+
   <script>
     window.domain = '{{domain}}';
     window.basePath = '{{basePath}}';
