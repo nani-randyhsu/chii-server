@@ -1,7 +1,10 @@
 # chii-server
 
-OneBook App（iOS / Android）書本 WebView 遠端除錯用的 [Chii](https://github.com/liriliri/chii) server。
-電腦瀏覽器用 Chrome DevTools 介面，就能看到手機 App 裡書本頁面的 DOM、Console、Network 和 storage。
+OneBook App（iOS / Android）書本頁和登入頁 WebView 遠端除錯用的 [Chii](https://github.com/liriliri/chii) server。
+電腦瀏覽器用 Chrome DevTools 介面，就能看到手機 App 裡網頁的 DOM、Console、Network 和 storage。
+
+- 工單：[OBAPP-625](https://team-oneclass.atlassian.net/browse/OBAPP-625)，調研過程和工具比較記在工單留言（摘要見「為什麼選 Chii」）
+- 部署：[Render 後台](https://dashboard.render.com/)的 `chii-server` 服務，網址 `https://chii-server.onrender.com`
 
 ## 目錄結構
 
@@ -58,7 +61,7 @@ npm start          # http://localhost:8080
 
 #### 2. iOS 專案設定（app-onebook_ios）
 
-打開 `eBook/VC/BookWebVC.swift`，把 `injectChiiRemoteDebugIfNeeded()` 裡的 `serverUrl` 改成：
+打開 `eBook/ChiiRemoteDebug.swift`，把 `ChiiRemoteDebug.serverUrl` 改成（書本頁和登入頁共用）：
 
 | 執行環境 | `serverUrl` |
 | --- | --- |
@@ -95,13 +98,17 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 2. 電腦瀏覽器打開 `http://localhost:8080`
 3. 點對應的 target 開始除錯，iOS 和 Android 會列在同一個頁面，標題分別是 `OneBook iOS - <書本 id>`、`OneBook Android - <書本 id>`
 
+- 本機 server 是 http，登入頁（https）建議用方式二除錯：
+  - Android 的 `CHII_SERVER_URL` 不是 https 時，登入頁直接不注入，Logcat 會出現 `Chii: 登入頁是 https，CHII_SERVER_URL 也要是 https://host[:port]`
+  - iOS 沒有這個檢查，但 https 頁面載入 http 的 target.js 可能被當成 mixed content 擋掉
+
 > 上面 App 端的網址修改只是本機除錯用，**不要 commit**，共用設定維持連 Render。
 
 ### 方式二：部署到 Render
 
 #### 1. 部署 server
 
-用 Blueprint 部署：Render → New → Blueprint → 選這個 repo，會讀 `render.yaml` 自動建立服務。
+用 Blueprint 部署：[Render 後台](https://dashboard.render.com/) → New → Blueprint → 選這個 repo，會讀 `render.yaml` 自動建立服務。
 
 | 設定 | 值 |
 | --- | --- |
@@ -124,17 +131,20 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 
 | 專案 | 位置 | 值 |
 | --- | --- | --- |
-| iOS | `eBook/VC/BookWebVC.swift` 的 `injectChiiRemoteDebugIfNeeded()` 裡的 `serverUrl` | `https://chii-server.onrender.com` |
+| iOS | `eBook/ChiiRemoteDebug.swift` 的 `ChiiRemoteDebug.serverUrl` | `https://chii-server.onrender.com` |
 | Android | `app/build.gradle` 的 `debug` buildType 的 `CHII_SERVER_URL` | `"https://chii-server.onrender.com"` |
 
 - 走 https，不需要額外調整 iOS ATS 或 Android network security config
 - 會注入的 build：iOS 是 Debug 系列 configuration，Android 是 debug / dev / uat；Release 都不會
+- Android 書本頁會等 target.js 載完才執行書本的程式（見「App 怎麼注入 target.js」），Render 休眠時開書會卡住約 1 分鐘，先用電腦瀏覽器叫醒 server
 
 #### 3. 開始除錯
 
 1. 電腦瀏覽器打開 `https://chii-server.onrender.com`（先叫醒 server）
-2. 用上述 build 的 App 打開書本，App 會自動載入 `https://chii-server.onrender.com/target.js`
-3. 回到瀏覽器，點對應的 target（`OneBook iOS - <書本 id>` / `OneBook Android - <書本 id>`）開始除錯
+2. 用上述 build 的 App 打開書本，或按「開始登入」進登入頁，App 會自動載入 `https://chii-server.onrender.com/target.js`
+3. 回到瀏覽器，點對應的 target 開始除錯：
+   - 書本頁：`OneBook iOS - <書本 id>` / `OneBook Android - <書本 id>`
+   - 登入頁：`OneBook iOS - Login` / `OneBook Android - Login`
 
 ## 客製化與同步上游
 
@@ -152,7 +162,9 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 
 #### 畫面預覽改用 App 原生截圖
 
-Chii 內建的畫面預覽是 chobitsu 用 html2canvas 把 DOM 重畫一次，iframe、影片、`filter` 等 CSS 效果常常畫不出來。客製後的 target.js 會先攔下 DevTools 的 `Page.startScreencast` / `stopScreencast` / `screencastFrameAck`，頁面上有 App 提供的截圖 bridge 時，改請 App 截取 WebView 的實際畫面；沒有 bridge 就照舊交給 chobitsu。
+Chii 內建的畫面預覽是 chobitsu 用 html2canvas 把 DOM 重畫一次，iframe、影片、`filter` 等 CSS 效果常常畫不出來。html2canvas 是用 JS 寫的排版引擎，照著 DOM 和 CSS 在 Canvas 上重畫，沒實作到的 CSS、讀不到的內容就會缺漏。網頁 JS 本身沒辦法真的截圖：瀏覽器基於安全不讓網頁讀螢幕像素（否則嵌在頁面裡的 iframe，例如銀行登入頁，內容就會被偷看），所以要看到真正畫出來的畫面，只能請 App 截。
+
+客製後的 target.js 會先攔下 DevTools 的 `Page.startScreencast` / `stopScreencast` / `screencastFrameAck`，頁面上有 App 提供的截圖 bridge 時，改請 App 截取 WebView 的實際畫面；沒有 bridge 就照舊交給 chobitsu。
 
 iOS 的截圖截不到 `<video>` 的畫面（例如生字的筆順動畫，那一塊會是空白），所以 iOS 收到截圖後，target.js 再把畫面上每個 `<video>` 目前的畫格畫到截圖上對應的位置。
 
@@ -176,6 +188,7 @@ App 端要實作的 bridge：
   - iOS：`ChiiRemoteDebug.swift` 的 `ChiiScreencastHandler`，用 `WKWebView.takeSnapshot`（截不到 `<video>`，改用 `drawHierarchy` 也一樣，所以由 target.js 補畫影片）
   - Android：`util/ChiiScreencastBridge.kt`，API 26 以上用 `PixelCopy` 複製螢幕上的實際像素，影片也截得到；API 24、25 退回 `WebView.draw()`（影片、WebGL 可能是空白）
   - 兩邊都只截 WebView 那一塊，旁邊的原生元件（例如 iOS 左上角的關閉鍵）不在預覽上，預覽的座標才會跟網頁一致
+  - Android 的 `PixelCopy` 截的是螢幕像素，疊在 WebView 上面的原生元件也會截進去，例如登入成功後蓋住 WebView 的 Loading 遮罩，這時預覽看到的是遮罩或開始頁
 - iOS 補畫影片的限制：
   - 照 `<video>` 的位置、border、padding 和 `object-fit` 畫，`object-position` 一律當作置中，CSS 旋轉和圓角不處理
   - 疊在影片上面的元素會被影片蓋掉；iframe 裡的影片不會補
@@ -260,13 +273,30 @@ chobitsu 只實作讀取和刪除 cookie，沒有 `Network.setCookie`，在 Appl
 | `chii/src/target/editableCookies.ts` | 新檔案，處理上面兩個指令 |
 | `chii/src/target/connectServer.ts` | 只加了把訊息先交給 `editableCookies` 的幾行 |
 
-- 刪除照舊交給 chobitsu
+新增、修改、刪除最後都是寫一筆 `document.cookie`，瀏覽器用「名稱 + domain + path」判斷是不是同一筆：已經有就覆蓋（修改），沒有就新增，到期時間設成過去就是刪除。
+
+- 刪除照舊交給 chobitsu（licia 的 `rmCookie`）：它只看名稱，不管 DevTools 給的 domain、path，先用頁面預設的 path 寫一筆過期的同名 cookie，名稱還在就換上層網域、各層 path 一組一組再試，直到名稱消失
+- 在表格改了名稱、Domain 或 Path，DevTools 會當成另一筆 cookie：先刪掉舊的，再新增
 - HttpOnly cookie 是 JS 碰不到的：列表上看不到，也不能把 cookie 設成 HttpOnly
-- `document.cookie` 只有名稱和值。瀏覽器的 Cookie Store API 有提供時（Chrome、Android WebView），domain、path、到期時間照實顯示；沒有的話一律當作目前網域、path 是 `/`、session cookie，這時：
+- `document.cookie` 只有名稱和值。瀏覽器的 Cookie Store API 有提供時（Chrome、Android WebView，而且頁面要是 https 或 localhost；iOS 待實機確認），domain、path、到期時間照實顯示；沒有的話一律當作目前網域、path 是 `/`、session cookie，這時：
   - 改值會變成 session cookie，App 關掉就消失；要保留就在 Expires 欄填日期
   - 原本的 domain 或 path 不是這樣的話，會多出一個同名的 cookie，可以先刪掉舊的再新增
 - Domain 只能填目前網域，或以 `.` 開頭的上層網域
+- 名稱不能有分號、等號或空白，值不能有分號或換行
 - 瀏覽器不收的 cookie（例如 `SameSite=None` 沒勾 Secure）那一列會維持沒存成功的樣子，原因會印在 Console：`[chii] 無法設定 cookie ...`
+
+#### 首頁改成線上書城的風格
+
+Chii 首頁（裝置列表）的配色、字型、頁首照[南一智慧電子書線上書城](https://reader.nani.com.tw/bookstore)調整，文案改成中文，並把使用步驟直接寫在列表上方，拿掉原本的 Help 按鈕和說明視窗。
+
+| 位置 | 內容 |
+| --- | --- |
+| `chii/server/tpl/index.hbs` | 頁首（圖示、標題、版本）、使用步驟、裝置列表的樣式；列表和工具列是 luna 元件，用 CSS 變數和覆寫的樣式換顏色 |
+| `chii/src/index.ts` | 拿掉 Help 按鈕和說明視窗 |
+
+- 裝置列表每列高度由 luna-data-grid 固定 20px，只能改顏色、不能改高度
+- 篩選欄位、裝置數量、欄位名稱和 inspect 是 `index.ts` 產生的，仍是英文
+- 改 `index.hbs` 要重新 `npm start`（範本讀過一次就快取）；`index.js` 的快取是 2 小時，部署後要強制重新整理（Cmd + Shift + R），不然舊的 `index.js` 會留下一個點了沒反應的 Help
 
 ### 同步上游
 
@@ -297,6 +327,18 @@ npm run build
 - 同步上游的 PR 用一般 merge 併回 `main`，不要 squash 或 rebase，否則 subtree 會找不到上次同步的位置
 
 ## 原理
+
+### 為什麼選 Chii
+
+電子書的主要功能都在 WebView 裡，所以先從 WebView 的遠端除錯著手，評估過 Chii 和 [PageSpy](https://github.com/HuolalaTech/page-spy-web)（試架的版本在 [nani-randyhsu/pagespy-server](https://github.com/nani-randyhsu/pagespy-server)），最後選 Chii：
+
+- Chii 直接用 Chrome DevTools 的介面，Elements、Console、Application 都能即時操作，適合線上除錯
+- PageSpy 的功能和管理介面比較齊全（例如 Network 看得到 sendBeacon、SSE，還有離線日誌回放），但是：
+  - 有許多屬於該專案的說明和品牌頁面，要用得一一拿掉
+  - Elements 面板只是一張快照，不能點選或操作，要改頁面得在 Console 下指令再重新整理面板
+  - storage、cookie 只能看不能改
+  - 除錯房間最長存在 1 小時；5 分鐘沒有資料往來，或手機和除錯介面都斷線超過 1 分鐘，房間就會被刪掉，之後要重新載入頁面才能再連上
+- 兩者都是在頁面裡注入 JS 模擬出來的，不能設中斷點、看不到 Native log 這些限制一樣（見「限制」）
 
 ### 為什麼需要 target.js
 
@@ -329,14 +371,37 @@ target.js 是放進被除錯網頁裡的除錯代理程式，負責和 Chii serv
 3. 連上後，DevTools 送來的 CDP 指令（例如「給我 DOM 樹」）交給 chobitsu 處理，結果再傳回 DevTools。
 4. 連線時會一併送出頁面網址和標題（我們設的 `ChiiTitle`），這些資訊就是 Chii 首頁列表上看到的 target。
 
+我們的客製都接在第 3 步：`chii/src/target/connectServer.ts` 收到 DevTools 的指令後，依序交給下面的模組，前面的模組處理完就直接回覆 DevTools，不再往後傳：
+
+| 順序 | 模組 | 處理的指令 |
+| --- | --- | --- |
+| 1 | `nativeScreencast` | 畫面預覽（`Page.startScreencast` 等），頁面上有 App 截圖 bridge 時才接手 |
+| 2 | `touchInput` | 預覽上的滑鼠左鍵和滾輪（`Input.dispatchMouseEvent`） |
+| 3 | `editableCookies` | `Network.getCookies`、`Network.setCookie` |
+| 4 | `resourceTiming` | 只旁聽 `Network.enable`，不攔 |
+| 5 | chobitsu | 其他所有指令，包含 `Network.deleteCookies` |
+
 ### App 怎麼注入 target.js
 
-兩邊做法一樣：先設好 target.js 會讀的全域變數 `window.ChiiServerUrl`、`window.ChiiTitle`，再在頁面插入一個 `<script src="<server>/target.js">`。用 `window.__onebookChiiInjected` 防止重複注入。
+書本頁和登入頁都會注入，做法一樣：先設好 target.js 會讀的全域變數 `window.ChiiServerUrl`、`window.ChiiTitle`，再在頁面插入一個 `<script src="<server>/target.js">`。用 `window.__onebookChiiInjected` 防止重複注入。
 
-| 平台 | 位置 | 注入時機 |
-| --- | --- | --- |
-| iOS | `BookWebVC.swift` 的 `injectChiiRemoteDebugIfNeeded()` | `WKUserScript`，`.atDocumentEnd`（DOM 解析完後）、`forMainFrameOnly: true` |
-| Android | `WebviewActivity.kt` 的 `injectChiiRemoteDebugIfNeeded()` | `onPageFinished` 後用 `evaluateJavascript` 執行 |
+| 平台 | 頁面 | 位置 | 注入時機 |
+| --- | --- | --- | --- |
+| iOS | 書本、登入 | `ChiiRemoteDebug.swift` 的 `ChiiRemoteDebug.install`，由 `BookWebVC`、`LoginVC` 呼叫 | `WKUserScript`，`.atDocumentEnd`（DOM 解析完後）、`forMainFrameOnly: true` |
+| Android | 書本 | `WebviewActivity.kt` 的 `interceptIndexHtmlForChii()` | `shouldInterceptRequest` 改寫本機 server 回的 `index.html`，在 `<head>` 最前面同步載入 target.js，比書本的程式先執行；改寫失敗才退回 `onPageFinished` 後用 `evaluateJavascript` 插入 |
+| Android | 登入 | `LoginActivity.kt` 的 `injectChiiRemoteDebugIfNeeded()` | `onPageFinished` 後用 `evaluateJavascript` 執行 |
+
+- iOS 的 `ChiiRemoteDebug.swift` 整個包在 `#if DEBUG`；Android 只在 debug / dev / uat build、而且 `CHII_SERVER_URL` 不是空字串時注入
+- Android 書本頁同步載入 target.js 的代價是 Render 休眠時，開書要等 target.js 載完
+- Android 書本頁還會先掛上一段紀錄 script，把啟動期間的 log 存起來（見「查 DevTools 連上前的紀錄」）
+
+#### 登入頁
+
+- 只注入 club 會員中心的頁面（iOS 比對 `CLUBLOGINURL` 的 host，Android 用 `UrlUtil.isClubLoginHost`），教育雲等第三方登入頁不注入
+- club 的 CSP header 不允許載入外部 script、連到 Chii server 的 WebSocket，target.js 本身也會用到 `new Function`，直接注入會被擋。所以 App 會自己向 club 取回主頁 HTML，拿掉 `Content-Security-Policy` header 後再交給 WebView（iOS 用 `loadSimulatedRequest`，Android 用 `shouldInterceptRequest`）；不是 200 的 HTML（例如轉址）或取回失敗時照原本方式載入，這時 Chii 會被 CSP 擋掉
+- 也就是說，會注入 Chii 的 build 不會套用 club 的 CSP，CSP 相關的問題要用 Release build 或電腦瀏覽器確認
+- iOS 拿不掉寫在 `<meta http-equiv>` 裡的 CSP，club 目前只放在 header
+- 登入頁是頁面解析完、載完才注入，會錯過 SPA 啟動階段
 
 ## 能做到的事
 
@@ -344,20 +409,47 @@ target.js 是放進被除錯網頁裡的除錯代理程式，負責和 Chii serv
 - **Console**：看 log、在頁面裡執行 JS
 - **Network**：看 XHR、fetch、WebSocket 請求，以及 JS、CSS、圖片、字型等靜態資源的載入結果（見「Network 面板補上靜態資源」）
 - **Application**：看 localStorage、sessionStorage、cookie，cookie 可以修改、新增、刪除（HttpOnly 的除外，見「Application 面板可以修改、新增 cookie」）
+- **畫面預覽**：看到 App 截的實際畫面，可以在預覽上點擊、拖曳、用滾輪捲動（見「畫面預覽改用 App 原生截圖」「預覽上的滑鼠操作改模擬成手指觸控」）
+- **裝置資訊**：在 Console 請 App 印出裝置資訊（見下方「除錯小技巧」）
+
+## 除錯小技巧
+
+### 在 Console 印出裝置資訊
+
+在書本頁的 Console 執行：
+
+| 平台 | 指令 |
+| --- | --- |
+| iOS | `window.webkit.messageHandlers.onebook.postMessage({ event: "logDeviceInfo" })` |
+| Android | `NaniBridge.postMessage(JSON.stringify({ event: "logDeviceInfo" }))` |
+
+App 收集裝置資訊後，用 `console.log` 印回 Console，內容和書櫃的「裝置回報」一樣。
+
+- 收集時會向 `api.ipify.org` 查公網 IP（最多等 5 秒），所以會晚幾秒才出現
+- 只有書本頁有，登入頁沒有
+- iOS 書本頁的 `console.log` 被換成轉給 App 的版本，這筆在 Chii 或 Xcode console（`LOG:` 開頭）看得到，Safari Web Inspector 看不到
+
+### 查 DevTools 連上前的紀錄（Android 書本頁）
+
+Android 書本頁在 target.js 之前會先掛上一段紀錄 script，把 console、未捕捉的錯誤、資源載入失敗、fetch、XHR 依序存進 `window.__onebookEarlyLogs`（只留前 1000 筆，`t` 是距離頁面開始的毫秒數）。DevTools 連上前發生的事，Chii 不一定會補送，可以在 Console 執行：
+
+```js
+console.table(__onebookEarlyLogs)
+```
 
 ## 限制
 
 這些功能都是 target.js 在頁面裡用 JS 模擬出來的，不是 WebView 原生的除錯介面，所以有以下限制：
 
-- **不能設中斷點**：沒有真正的 JS 除錯器，沒辦法在 Sources 面板的某一行停下來逐步執行，只能靠 Console 或加 log 追問題。
-- **看不到注入前發生的事**：target.js 是頁面載入到一半之後才插進去的（時機見上方「App 怎麼注入 target.js」）。插進去之後還要從 server 下載 target.js 並連線，所以頁面剛開始的 console log 不會出現，請求也只看得到網址和耗時（從資源載入紀錄補上），看不到 header 和內容。
+- **不能設中斷點**（已調研，不可行）：JS 注入的除錯只能攔截頁面層級的 API（Console、Network、DOM），沒辦法 attach 到瀏覽器底層的 JS 引擎（V8 / JavaScriptCore）；JS 本身也不能暫停執行緒、控制 call stack，所以做不到中斷點和逐步執行，只能靠 Console 或加 log 追問題。
+- **看不到注入前發生的事**：iOS（書本頁、登入頁）和 Android 登入頁都是頁面載入到一半之後才插進 target.js（時機見上方「App 怎麼注入 target.js」），插進去之後還要從 server 下載 target.js 並連線，所以頁面剛開始的 console log 不會出現，請求也只看得到網址和耗時（從資源載入紀錄補上），看不到 header 和內容。Android 書本頁改成在 `<head>` 最前面載入，比書本的程式先執行，DevTools 連上前的紀錄可以查 `window.__onebookEarlyLogs`。
 - **Network 的靜態資源資訊較少**：JS、CSS、圖片、字型是從瀏覽器的資源載入紀錄補上的，載完才出現，沒有 header 和內容；只有 XHR、fetch、WebSocket 看得到完整內容。
-- **只除錯得到主頁面**：iOS 設了 `forMainFrameOnly: true`，Android 的 `evaluateJavascript` 也只在主頁面執行，所以 iframe 裡的內容（例如書本中部分用 iframe 載入的元件）不會被除錯到。
+- **只除錯得到主頁面**：兩邊都只在主頁面注入（iOS 設了 `forMainFrameOnly: true`，Android 只改寫主頁面的 HTML，`evaluateJavascript` 也只在主頁面執行），所以 iframe 裡的內容（例如書本中部分用 iframe 載入的元件）不會被除錯到。
 - **看不到 Native log**：Swift / Kotlin 端的 log 不會出現在 DevTools。
 
 ## ⚠️ 安全注意
 
-Chii 沒有任何登入驗證，知道網址的人都能看到連線中裝置的 DOM、storage 和 cookie（含登入 token）。
+Chii 沒有任何登入驗證，知道網址的人都能看到連線中裝置的 DOM、storage 和 cookie（含登入 token），登入頁輸入的帳號密碼也看得到。
 
 - 只讓 dev / uat build 連線，只用測試帳號
 - 正式版 App 不可帶這個網址
