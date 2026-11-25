@@ -204,7 +204,7 @@ chobitsu 收到預覽上的滑鼠操作時，只會對游標下的元素送出 J
 | 預覽上的操作 | 送到頁面的事件 |
 | --- | --- |
 | 按下左鍵 | `pointerdown` → `touchstart` |
-| 按著移動 | `pointermove` → `touchmove`，送給按下時的元素（跟真的觸控一樣） |
+| 按著移動 | `pointermove` → `touchmove`，送給按下時的元素（跟真的觸控一樣）；頁面沒攔下時，捲動按下位置的可捲動區塊（見下方「拖曳捲動」） |
 | 放開 | `pointerup` → `touchend`；移動不超過 10px 而且沒被 `preventDefault` 時，再補 `mousedown` → `mouseup` → `click` |
 | 沒按著移動 | 不送事件（手指沒有 hover） |
 | 滾輪 | 先送 `wheel`，沒被 `preventDefault` 就照 `deltaY` 的方向捲動游標所在的可捲動區塊 |
@@ -216,7 +216,12 @@ chobitsu 收到預覽上的滑鼠操作時，只會對游標下的元素送出 J
 
 - pointer 事件的 `pointerType` 是 `touch`、`pointerId` 固定是 9527；對這個 `pointerId` 呼叫 `setPointerCapture` 不會丟例外，`pointermove` / `pointerup` 會改送給 capture 的元素
 - 不能用建構子建立 `Touch` / `TouchEvent` 的環境（例如部分 iOS 版本），改用一般 `Event` 補上 `touches` / `changedTouches` 等屬性，前端讀法一樣，只是 `instanceof TouchEvent` 會是 `false`
-- 仍然是 JS 產生的事件（`isTrusted` 為 `false`），瀏覽器不會因此原生捲動、選取文字或啟動 HTML5 拖放；要捲動頁面請用滾輪
+- 拖曳捲動：JS 產生的事件（`isTrusted` 為 `false`）不會讓瀏覽器原生捲動，例如書本底部 `overflow-x: auto` 的工具列原本拖不動（放大後的書本內容拖得動，是因為 `react-zoom-pan-pinch` 用 JS 處理平移）。所以 target.js 照手機瀏覽器的規則自己捲：
+  - 移動超過 10px 時，`touchstart` 和這次的 `touchmove` 都沒被 `preventDefault`，才會捲動
+  - 從按下的元素往上找第一個這個方向捲得動的區塊（`overflow` 是 `auto` / `scroll`，而且還沒捲到底），途中的 `touch-action` 也要允許這個方向，所以 `touch-action: none` 的畫布不會捲
+  - 開始捲動時跟手機一樣送 `pointercancel`，之後不再送 pointer 事件，touch 事件照送
+  - 放開後沒有慣性
+- 仍然是 JS 產生的事件，瀏覽器不會因此選取文字或啟動 HTML5 拖放
 - 右鍵等其他按鍵照舊交給 chobitsu
 
 #### Network 面板補上靜態資源

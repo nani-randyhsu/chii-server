@@ -9,11 +9,16 @@
 //   放開：pointerup → touchend；沒有移動（點一下）而且沒被 preventDefault 時，再補 mousedown → mouseup → click
 // 沒按著時的游標移動不送事件（手指沒有 hover），右鍵等其他按鍵照舊交給 chobitsu。
 //
+// 拖曳捲動：JS 產生的事件（isTrusted 為 false）不會讓瀏覽器原生捲動，例如 overflow-x: auto 的工具列拖不動。
+// 所以這裡照手機瀏覽器的規則自己捲：移動超過 TAP_SLOP 時，touchstart 和這次的 touchmove 都沒被 preventDefault，
+// 就從按下的元素往上找第一個這個方向捲得動的區塊（overflow 是 auto / scroll，而且還沒捲到底），
+// 途中的 touch-action 也要允許這個方向（例如 touch-action: none 的畫布不會捲），之後跟著游標捲動。
+// 開始捲動時跟手機一樣送 pointercancel，之後不再送 pointer 事件，touch 事件照送。
+//
 // 滾輪也在這裡處理：chobitsu 是 scrollTop -= deltaY，跟 DevTools 送來的 deltaY 方向相反，
 // 在預覽上往下滾，頁面反而往上捲。這裡先送 wheel 事件，沒被 preventDefault 就照 deltaY 的方向捲動。
 //
-// 限制：仍然是 JS 產生的事件（isTrusted 為 false），瀏覽器不會因此原生捲動或啟動 HTML5 拖放，
-// 拖曳捲動頁面請改用滾輪。
+// 限制：仍然是 JS 產生的事件，瀏覽器不會因此選取文字或啟動 HTML5 拖放；拖曳捲動沒有放開後的慣性。
 
 type Send = (message: string) => void;
 
@@ -42,15 +47,27 @@ interface TouchPoint {
   force: number;
 }
 
+// 拖曳捲動中的區塊；allowX / allowY 是途中的 touch-action 允不允許這個方向
+interface DragScroll {
+  element: Element;
+  allowX: boolean;
+  allowY: boolean;
+}
+
 interface ActiveTouch {
   target: Element;
   startX: number;
   startY: number;
+  // 上一次的位置，拖曳捲動時算移動量
+  lastX: number;
+  lastY: number;
   moved: boolean;
   // pointerdown 被 preventDefault：不補 mousedown / mouseup
   suppressMouse: boolean;
   // touchstart / touchend 被 preventDefault：不補任何 mouse 事件和 click
   suppressClick: boolean;
+  // 拖曳捲動：還沒決定 / 不捲（頁面 preventDefault 或找不到捲得動的區塊）/ 正在捲的區塊
+  scroll: 'pending' | 'none' | DragScroll;
 }
 
 // 模擬手指用的 pointerId，挑一個不會跟真實輸入撞到的值
@@ -220,6 +237,52 @@ function wheel(params: MouseParams) {
   scroller.scrollTop += deltaY;
 }
 
+// 依 touch-action 判斷手指能不能往這個方向平移（none、只有 pinch-zoom 等都不行）
+function allowsPan(element: Element, axis: 'x' | 'y') {
+  const value = getComputedStyle(element).touchAction || 'auto';
+  if (value === 'auto' || value === 'manipulation') return true;
+  return axis === 'x' ? /pan-(x|left|right)/.test(value) : /pan-(y|up|down)/.test(value);
+}
+
+// 整頁能不能用手指捲：<html> 或 <body> 的 overflow 是 hidden 時，手機上捲不動
+function isPageScrollBlocked(axis: 'x' | 'y') {
+  return [document.documentElement, document.body].some(element => {
+    if (!element) return false;
+    const style = getComputedStyle(element);
+    const overflow = axis === 'x' ? style.overflowX : style.overflowY;
+    return overflow === 'hidden' || overflow === 'clip';
+  });
+}
+
+// 這個元素能不能往這個方向捲；delta 是要捲的量，正數代表 scrollLeft / scrollTop 變大
+function canDragScroll(element: Element, axis: 'x' | 'y', delta: number) {
+  if (element === (document.scrollingElement || document.documentElement)) {
+    if (isPageScrollBlocked(axis)) return false;
+  } else {
+    const style = getComputedStyle(element);
+    const overflow = axis === 'x' ? style.overflowX : style.overflowY;
+    if (overflow !== 'auto' && overflow !== 'scroll') return false;
+  }
+  const max = axis === 'x' ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight;
+  const position = axis === 'x' ? element.scrollLeft : element.scrollTop;
+  return delta > 0 ? position < max - 1 : position > 0;
+}
+
+// 從按下的元素往上找第一個這個方向捲得動的區塊，途中的 touch-action 不允許這個方向就不捲
+function findDragScroll(target: Element, axis: 'x' | 'y', delta: number): DragScroll | null {
+  let allowX = true;
+  let allowY = true;
+  let element: Element | null = target;
+  while (element) {
+    allowX = allowX && allowsPan(element, 'x');
+    allowY = allowY && allowsPan(element, 'y');
+    if (!(axis === 'x' ? allowX : allowY)) return null;
+    if (canDragScroll(element, axis, delta)) return { element, allowX, allowY };
+    element = element.parentElement;
+  }
+  return null;
+}
+
 export default function createTouchInput(send: Send) {
   let active: ActiveTouch | null = null;
 
@@ -232,24 +295,68 @@ export default function createTouchInput(send: Send) {
       target,
       startX: params.x,
       startY: params.y,
+      lastX: params.x,
+      lastY: params.y,
       moved: false,
       suppressMouse: false,
       suppressClick: false,
+      scroll: 'pending',
     };
     if (!firePointer('pointerdown', target, params, 1)) active.suppressMouse = true;
-    if (!fireTouch('touchstart', target, params, false)) active.suppressClick = true;
+    if (!fireTouch('touchstart', target, params, false)) {
+      // touchstart 被 preventDefault，手機上這次觸控不會捲動
+      active.suppressClick = true;
+      active.scroll = 'none';
+    }
+  }
+
+  // 移動超過 TAP_SLOP 時決定要不要捲、捲哪個區塊
+  function startDragScroll(touch: ActiveTouch, params: MouseParams) {
+    const deltaX = touch.startX - params.x;
+    const deltaY = touch.startY - params.y;
+    const axis = Math.abs(deltaX) >= Math.abs(deltaY) ? 'x' : 'y';
+    const scroll = findDragScroll(touch.target, axis, axis === 'x' ? deltaX : deltaY);
+    if (!scroll) {
+      touch.scroll = 'none';
+      return;
+    }
+    touch.scroll = scroll;
+    // 手機開始捲動時會取消 pointer，之後不再送 pointer 事件
+    firePointer('pointercancel', captureTarget || touch.target, params, 0);
+    captureTarget = null;
+    // 從按下的位置開始算，捲動量才會跟游標一致
+    touch.lastX = touch.startX;
+    touch.lastY = touch.startY;
   }
 
   function move(touch: ActiveTouch, params: MouseParams) {
     if (Math.abs(params.x - touch.startX) > TAP_SLOP || Math.abs(params.y - touch.startY) > TAP_SLOP) {
       touch.moved = true;
     }
-    firePointer('pointermove', captureTarget || touch.target, params, 1);
-    fireTouch('touchmove', touch.target, params, false);
+    if (typeof touch.scroll !== 'object') {
+      firePointer('pointermove', captureTarget || touch.target, params, 1);
+    }
+    const notPrevented = fireTouch('touchmove', touch.target, params, false);
+
+    if (touch.scroll === 'pending') {
+      // 開始捲動前的 touchmove 被 preventDefault（例如頁面自己處理拖曳），就不捲
+      if (!notPrevented) touch.scroll = 'none';
+      else if (touch.moved) startDragScroll(touch, params);
+    }
+    if (typeof touch.scroll === 'object') {
+      const { element, allowX, allowY } = touch.scroll;
+      if (allowX) element.scrollLeft += touch.lastX - params.x;
+      if (allowY) element.scrollTop += touch.lastY - params.y;
+    }
+    touch.lastX = params.x;
+    touch.lastY = params.y;
   }
 
   function release(touch: ActiveTouch, params: MouseParams) {
-    firePointer('pointerup', captureTarget || touch.target, params, 0);
+    // 已經開始捲動的話 pointer 早就取消了，不再送 pointerup
+    if (typeof touch.scroll !== 'object') {
+      firePointer('pointerup', captureTarget || touch.target, params, 0);
+    }
     captureTarget = null;
     if (!fireTouch('touchend', touch.target, params, true)) touch.suppressClick = true;
 
