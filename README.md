@@ -136,7 +136,7 @@ adb reverse tcp:8090 tcp:8080   # 模擬器、USB、無線偵錯都適用
 
 - 走 https，不需要額外調整 iOS ATS 或 Android network security config
 - 會注入的 build：iOS 是 Debug 系列 configuration，Android 是 debug / dev / uat；Release 都不會
-- Android 書本頁會等 target.js 載完才執行書本的程式（見「App 怎麼注入 target.js」），Render 休眠時開書會卡住約 1 分鐘，先用電腦瀏覽器叫醒 server
+- App 開書本頁、登入頁前會先確認 server 醒著，沒醒就改成頁面載完才注入，會看不到頁面啟動期間的紀錄（見「App 怎麼注入 target.js」）。要看啟動期間的紀錄，先用電腦瀏覽器叫醒 server 再開頁面
 
 #### 3. 開始除錯
 
@@ -383,25 +383,30 @@ target.js 是放進被除錯網頁裡的除錯代理程式，負責和 Chii serv
 
 ### App 怎麼注入 target.js
 
-書本頁和登入頁都會注入，做法一樣：先設好 target.js 會讀的全域變數 `window.ChiiServerUrl`、`window.ChiiTitle`，再在頁面插入一個 `<script src="<server>/target.js">`。用 `window.__onebookChiiInjected` 防止重複注入。
+書本頁和登入頁都會注入。做法是先設好 target.js 會讀的全域變數 `window.ChiiServerUrl`、`window.ChiiTitle`，再在頁面插入一個 `<script src="<server>/target.js">`，用 `window.__onebookChiiInjected` 防止重複注入。
 
-| 平台 | 頁面 | 位置 | 注入時機 |
+target.js 要比頁面自己的程式先執行：chobitsu 從 target.js 載入那刻起就會暫存 console、錯誤、fetch、XHR（含 header 和內容），DevTools 第一次連上時一次補送，所以晚開 DevTools 也看得到頁面啟動期間的紀錄；頁面載完才注入的話，這些都看不到。因此 App 會先自己取回頁面的 HTML，把 target.js 插在 `<head>` 最前面同步載入，再交給 WebView：
+
+| 平台 | 頁面 | 位置 | 怎麼改寫 HTML |
 | --- | --- | --- | --- |
-| iOS | 書本、登入 | `ChiiRemoteDebug.swift` 的 `ChiiRemoteDebug.install`，由 `BookWebVC`、`LoginVC` 呼叫 | `WKUserScript`，`.atDocumentEnd`（DOM 解析完後）、`forMainFrameOnly: true` |
-| Android | 書本 | `WebviewActivity.kt` 的 `interceptIndexHtmlForChii()` | `shouldInterceptRequest` 改寫本機 server 回的 `index.html`，在 `<head>` 最前面同步載入 target.js，比書本的程式先執行；改寫失敗才退回 `onPageFinished` 後用 `evaluateJavascript` 插入 |
-| Android | 登入 | `LoginActivity.kt` 的 `injectChiiRemoteDebugIfNeeded()` | `onPageFinished` 後用 `evaluateJavascript` 執行 |
+| iOS | 書本 | `BookWebVC` 的 `loadBookPage()` 呼叫 `ChiiRemoteDebug.loadForChii` | 向本機書本 server 取回 `index.html`，插入後用 `loadSimulatedRequest` 載入 |
+| iOS | 登入 | `LoginVC` 的 `interceptClubPageForChii()` 呼叫 `ChiiRemoteDebug.loadForChii` | 在 `decidePolicyFor` 攔下 club 頁面，取回 HTML、拿掉 CSP、插入後用 `loadSimulatedRequest` 載入 |
+| Android | 書本 | `WebviewActivity.kt` 的 `interceptIndexHtmlForChii()` | `shouldInterceptRequest` 向本機書本 server 取回 `index.html`，插入後回傳 |
+| Android | 登入 | `LoginActivity.kt` 的 `interceptClubPageForChii()` | `shouldInterceptRequest` 取回 club 的 HTML，拿掉 CSP、插入後回傳 |
 
+- 插入的內容：iOS 是 `ChiiRemoteDebug.swift` 的 `headHTML`，Android 是 `util/ChiiRemoteDebug.kt` 的 `headHtml`。除了 target.js，還會先掛上一段紀錄 script，把啟動期間的 log 另外存起來（見「查 DevTools 連上前的紀錄」）
+- 同步載入時頁面要等 target.js 下載完，所以插入前會先確認 server 醒著：`/timestamp` 要在 2 秒內回傳時間戳。Render 休眠或連不上時不插入，改成頁面載完才注入（iOS 是 `ChiiRemoteDebug.install` 的 `WKUserScript`，`.atDocumentEnd`；Android 是 `onPageFinished` 後用 `evaluateJavascript`），不會卡住頁面，但會錯過啟動階段
+- 取回或改寫 HTML 失敗（例如找不到 `<head>`）時，也一樣退回頁面載完才注入
+- iOS 書本頁自己重新整理（`location.reload()`）時不會再經過 `loadForChii`，也是頁面載完才注入
 - iOS 的 `ChiiRemoteDebug.swift` 整個包在 `#if DEBUG`；Android 只在 debug / dev / uat build、而且 `CHII_SERVER_URL` 不是空字串時注入
-- Android 書本頁同步載入 target.js 的代價是 Render 休眠時，開書要等 target.js 載完
-- Android 書本頁還會先掛上一段紀錄 script，把啟動期間的 log 存起來（見「查 DevTools 連上前的紀錄」）
+- iOS 書本頁的 `captureLog`（把 `console.log` 轉給 App）會照樣呼叫原本的 `console.log`；如果整個換掉，target.js 提早包住的 `console.log` 會被蓋掉，之後的 log 就不會出現在 Chii
 
 #### 登入頁
 
 - 只注入 club 會員中心的頁面（iOS 比對 `CLUBLOGINURL` 的 host，Android 用 `UrlUtil.isClubLoginHost`），教育雲等第三方登入頁不注入
-- club 的 CSP header 不允許載入外部 script、連到 Chii server 的 WebSocket，target.js 本身也會用到 `new Function`，直接注入會被擋。所以 App 會自己向 club 取回主頁 HTML，拿掉 `Content-Security-Policy` header 後再交給 WebView（iOS 用 `loadSimulatedRequest`，Android 用 `shouldInterceptRequest`）；不是 200 的 HTML（例如轉址）或取回失敗時照原本方式載入，這時 Chii 會被 CSP 擋掉
+- club 的 CSP header 不允許載入外部 script、連到 Chii server 的 WebSocket，target.js 本身也會用到 `new Function`，直接注入會被擋。所以上面取回 club 的 HTML 時，會一併拿掉 `Content-Security-Policy` header；server 沒醒時一樣會拿掉，頁面載完後的注入才不會被擋。不是 200 的 HTML（例如轉址）或取回失敗時照原本方式載入，這時 Chii 會被 CSP 擋掉
 - 也就是說，會注入 Chii 的 build 不會套用 club 的 CSP，CSP 相關的問題要用 Release build 或電腦瀏覽器確認
 - iOS 拿不掉寫在 `<meta http-equiv>` 裡的 CSP，club 目前只放在 header
-- 登入頁是頁面解析完、載完才注入，會錯過 SPA 啟動階段
 
 ## 能做到的事
 
@@ -427,11 +432,13 @@ App 收集裝置資訊後，用 `console.log` 印回 Console，內容和書櫃�
 
 - 收集時會向 `api.ipify.org` 查公網 IP（最多等 5 秒），所以會晚幾秒才出現
 - 只有書本頁有，登入頁沒有
-- iOS 書本頁的 `console.log` 被換成轉給 App 的版本，這筆在 Chii 或 Xcode console（`LOG:` 開頭）看得到，Safari Web Inspector 看不到
+- iOS 書本頁的 `console.log` 也會轉給 App，所以這筆在 Xcode console（`LOG:` 開頭）也看得到
 
-### 查 DevTools 連上前的紀錄（Android 書本頁）
+### 查 DevTools 連上前的紀錄
 
-Android 書本頁在 target.js 之前會先掛上一段紀錄 script，把 console、未捕捉的錯誤、資源載入失敗、fetch、XHR 依序存進 `window.__onebookEarlyLogs`（只留前 1000 筆，`t` 是距離頁面開始的毫秒數）。DevTools 連上前發生的事，Chii 不一定會補送，可以在 Console 執行：
+target.js 提早插入的頁面（見「App 怎麼注入 target.js」），DevTools 連上前的 console、錯誤和請求，chobitsu 會補送給第一個連上的 DevTools；但只補送一次，關掉 DevTools 再開就沒有了。
+
+所以插入 target.js 之前，還會先掛上一段紀錄 script，把 console、未捕捉的錯誤、資源載入失敗、fetch、XHR 依序存進 `window.__onebookEarlyLogs`（只留前 1000 筆，`t` 是距離頁面開始的毫秒數）。第二次開 DevTools 時，可以在 Console 執行下面的指令（server 沒醒、target.js 頁面載完才注入時，紀錄 script 也不會掛上，就沒有這個變數）：
 
 ```js
 console.table(__onebookEarlyLogs)
@@ -442,9 +449,9 @@ console.table(__onebookEarlyLogs)
 這些功能都是 target.js 在頁面裡用 JS 模擬出來的，不是 WebView 原生的除錯介面，所以有以下限制：
 
 - **不能設中斷點**（已調研，不可行）：JS 注入的除錯只能攔截頁面層級的 API（Console、Network、DOM），沒辦法 attach 到瀏覽器底層的 JS 引擎（V8 / JavaScriptCore）；JS 本身也不能暫停執行緒、控制 call stack，所以做不到中斷點和逐步執行，只能靠 Console 或加 log 追問題。
-- **看不到注入前發生的事**：iOS（書本頁、登入頁）和 Android 登入頁都是頁面載入到一半之後才插進 target.js（時機見上方「App 怎麼注入 target.js」），插進去之後還要從 server 下載 target.js 並連線，所以頁面剛開始的 console log 不會出現，請求也只看得到網址和耗時（從資源載入紀錄補上），看不到 header 和內容。Android 書本頁改成在 `<head>` 最前面載入，比書本的程式先執行，DevTools 連上前的紀錄可以查 `window.__onebookEarlyLogs`。
+- **server 沒醒時看不到啟動期間的事**：server 醒著時，target.js 會插在頁面 `<head>` 最前面，比頁面自己的程式先執行（見上方「App 怎麼注入 target.js」）。Render 休眠時為了不卡住頁面，改成頁面載完才插入，插進去之後還要從 server 下載 target.js 並連線，所以頁面剛開始的 console log 不會出現，請求也只看得到網址和耗時（從資源載入紀錄補上），看不到 header 和內容。
 - **Network 的靜態資源資訊較少**：JS、CSS、圖片、字型是從瀏覽器的資源載入紀錄補上的，載完才出現，沒有 header 和內容；只有 XHR、fetch、WebSocket 看得到完整內容。
-- **只除錯得到主頁面**：兩邊都只在主頁面注入（iOS 設了 `forMainFrameOnly: true`，Android 只改寫主頁面的 HTML，`evaluateJavascript` 也只在主頁面執行），所以 iframe 裡的內容（例如書本中部分用 iframe 載入的元件）不會被除錯到。
+- **只除錯得到主頁面**：兩邊都只在主頁面注入（只改寫主頁面的 HTML；頁面載完才注入時，iOS 設了 `forMainFrameOnly: true`，Android 的 `evaluateJavascript` 也只在主頁面執行），所以 iframe 裡的內容（例如書本中部分用 iframe 載入的元件）不會被除錯到。
 - **看不到 Native log**：Swift / Kotlin 端的 log 不會出現在 DevTools。
 
 ## ⚠️ 安全注意
